@@ -2,9 +2,7 @@ import dataclasses
 from copy import deepcopy
 from enum import Enum
 from types import MethodType
-from typing import Callable, Optional, Sequence
-
-import networkx as nx
+from typing import Callable, Optional, Sequence, Any
 
 
 class _MetaTransition(type):
@@ -55,35 +53,49 @@ class FSM_base:
         for i in dir(self):
             v = getattr(self, i)
             if isinstance(v, Transition):
-                tr = v.bind(self)
+                tr = v._bind(self)
                 self.transitions[i] = tr
                 setattr(self, i, tr)
             if isinstance(v, Event_Handler):
                 self.events[i] = v
 
     def make_graph(self):
+        import networkx as nx
         g = nx.DiGraph
-
-
 
 
 @dataclasses.dataclass
 class Transition():  # metaclass=_MetaTransition):
-    src: STATE = None
-    dst: STATE = None
-    side_effects: list = dataclasses.field(default_factory=list)
-    _self_effects: list = dataclasses.field(default_factory=list)
-    _fsm_ref: FSM_base = None
+    """
+    Abstraction of state transition of FSM
+    """
+    src: STATE = None  # source state
+    dst: STATE = None  # destination state
+    side_effects: list = dataclasses.field(default_factory=list)  # list of side effects (in order)
+    _self_effects: list = dataclasses.field(default_factory=list) # internal
+    _fsm_ref: FSM_base = None # internal
 
     def side_effect(self, f: Callable):
+        """Registers callable f as side effect of transition. f can not be a method on the FSM itself.
+        :returns Transition instance
+        """
         self.side_effects.append(f)
         return self
 
-    def self_effect(self, f: Callable):
-        self._self_effects.append(f)
+    def self_effect(self, m: Callable):
+        """
+        Registers class method m as side effect of transition.
+        :param m: method to register. m must be a method on the FSM class (i.e. not bound).
+        :returns Transition instance
+        """
+        assert self._fsm_ref is None, "Can not register self_effect after Transition is bound to FSM"
+        self._self_effects.append(m)
         return self
 
-    def bind(self, fsm: FSM_base):
+    def _bind(self, fsm: FSM_base):
+        """Binds Transition to fsm.
+         Creates a copy of Transition instance such that each FSM can have its own customized Transitions.
+         Also binds all self_effects. """
         x = deepcopy(self)
         x._fsm_ref = fsm
         for e in x._self_effects:
@@ -92,22 +104,28 @@ class Transition():  # metaclass=_MetaTransition):
         return x
 
     # noinspection PyProtectedMember
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs) -> tuple[Any]:
+        """
+        Allows Transitions to be called as events, thus forcing FSM to switch states.
+
+        Use in cases where events would be overkill for your needs.
+        :param args: passed to side_effect functions
+        :param kwargs: passed to side_effect functions
+        :return: tuple of return values from side_effects, in order
+        """
         self._fsm_ref._can_transition(self.src)
         try:
-            for se in self.side_effects:
-                se(*args, FSM=self._fsm_ref, **kwargs)
+            rv = tuple(se(*args, FSM=self._fsm_ref, **kwargs) for se in self.side_effects)
             self._fsm_ref.state = self.dst
+            return rv
         except Exception:
             self._fsm_ref._is_valid = False
             raise
 
 
-def moo_side_effect(FSM: FSM_base, moo_maybe: str = "", **_):
-    print(f"MOOOOOO {FSM} {moo_maybe}")
-
-
 class Event_Handler:
+    """Actual event handler that gets attached to FSM classes. Acts as a Python Descriptor,
+     i.e. it will bind to appropriate FSM entity when called."""
     def __init__(self, fn: Callable, states: set[STATE], fsm: Optional[FSM_base] = None):
         self.states = states
         self.fn = fn
@@ -149,72 +167,23 @@ class Event_Handler:
 
 
 def event(state: Optional[STATE] = None, states: Sequence[STATE] = tuple()):
+    """Decorator that turns methods into event handlers.
+    state and states arguments will be merged into a single set.
+
+    :param state: state in which this event can be handled
+    :param states: sequence of states in which this event can be handled
+    :returns a decorator for event
+    """
     states = set(states)
     if state is not None:
         states.add(state)
 
     def wrapper(f: Callable):
+        """Wraps method f as event handler"""
         print(f"Creating event from {f}")
         return Event_Handler(f, states)
 
     return wrapper
 
 
-OBSCURE_EXTERNAL_CONDITION = False
 
-
-class Panda(FSM_base):
-    @dataclasses.dataclass
-    class states:
-        HUNGRY: STATE = "Hungry"
-        ANGRY: STATE = "Angry"
-        HAPPY: STATE = "Happy"
-
-    def __init__(self, name: str):
-        self.name = name
-        self.state = self.states.HUNGRY
-        FSM_base.__init__(self)
-
-    def mutating_side_effect(self, time=10, **_):
-        print(f"TIMER ARM {time}")
-
-    eat = Transition(src=states.HUNGRY, dst=states.ANGRY).side_effect(moo_side_effect).self_effect(mutating_side_effect)
-    shoot = Transition(src=states.ANGRY, dst=states.HAPPY)
-    leave = Transition(src=states.HAPPY, dst=states.HUNGRY)
-
-    @event(state=states.HUNGRY)
-    def food_sighted(self, **_):
-        print(f"{self.name} food_sighted")
-        if OBSCURE_EXTERNAL_CONDITION:
-            return self.eat
-        else:
-            return None
-
-    def __repr__(self):
-        return self.name
-
-    @event(state=states.ANGRY)
-    def target_sighted(self, **_):
-        print(f"{self.name} target_sighted")
-        if OBSCURE_EXTERNAL_CONDITION:
-            return self.shoot
-        else:
-            return None
-
-    @event(state=states.HAPPY)
-    def all_done(self, **_):
-        print(f"{self.name} all_done")
-        return self.leave
-
-
-Panda1 = Panda("Arnold")
-OBSCURE_EXTERNAL_CONDITION = False
-Panda1.food_sighted()
-OBSCURE_EXTERNAL_CONDITION = True
-Panda1.food_sighted()
-Panda1.target_sighted()
-
-Panda2 = Panda("Dolf")
-Panda1.leave.side_effect(Panda2.food_sighted)
-Panda1.all_done()
-Panda2.shoot()
