@@ -1,31 +1,26 @@
+import copy
 import dataclasses
+import enum
 from copy import deepcopy
 from enum import Enum
 from types import MethodType
-from typing import Callable, Optional, Sequence, Any
-
-
-class _MetaTransition(type):
-    def __getitem__(self, item):
-        print(f"meta: {item=}")
-        inst = self()
-        if item is None or item is not CALLABLE:
-            del item.__call__
-
-        return self
-
-
-class STATE:
-    pass
-
+from typing import Callable, Optional, Sequence, Any, MutableSequence
 
 CALLABLE = "CALLABLE"
+
+
+class FSM_STATES(str, enum.Enum):
+    def _generate_next_value_(name, start, count, last_values):
+        return name
 
 
 class FSM_base:
     _current_state = None
     _is_handling_event = False
     _is_valid = True
+
+    class states(FSM_STATES):
+        pass
 
     @property
     def valid(self):
@@ -59,21 +54,46 @@ class FSM_base:
             if isinstance(v, Event_Handler):
                 self.events[i] = v
 
-    def make_graph(self):
+    def make_networkx_graph(self):
         import networkx as nx
-        g = nx.DiGraph
+        g = nx.MultiDiGraph()
+        g.add_nodes_from(self.states.__members__.keys())
+        for n, t in self.transitions.items():
+            g.add_edge(t.src.name, t.dst.name, label=n, effects=t.side_effects)
+        return g
+
+    def make_dot_graph(self, name:str=None):
+        import pydot
+        if name is None:
+            name = self.__class__.__name__
+        graph = pydot.Dot(name, graph_type='digraph')
+        graph.prog = "/usr/bin/dot"
+        for k, v in self.states.__members__.items():
+            label = f"""<{k}. <BR/> {v.value}>"""
+            graph.add_node(pydot.Node(k, label=label))
+
+        for n, t in self.transitions.items():
+            label = """<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">"""
+            for f in t.side_effects:
+                label += f"<TR><TD>{f.__name__}</TD></TR>"
+            label += """</TABLE>>"""
+            print(label)
+            graph.add_edge(pydot.Edge(t.src.name, t.dst.name, label=label, color='blue'))
+        return graph
 
 
-@dataclasses.dataclass
-class Transition():  # metaclass=_MetaTransition):
+@dataclasses.dataclass(frozen=True, slots=True)
+class Transition:
     """
     Abstraction of state transition of FSM
     """
-    src: STATE = None  # source state
-    dst: STATE = None  # destination state
-    side_effects: list = dataclasses.field(default_factory=list)  # list of side effects (in order)
-    _self_effects: list = dataclasses.field(default_factory=list) # internal
-    _fsm_ref: FSM_base = None # internal
+    src: FSM_STATES = None  # source state
+    dst: FSM_STATES = None  # destination state
+    side_effects: MutableSequence = dataclasses.field(default_factory=list)  # list of side effects (in order)
+    frozen: bool = False  # prevents modification in runtime
+
+    _self_effects: MutableSequence = dataclasses.field(default_factory=list)  # internal use, list of not-yet-bound methods
+    _fsm_ref: FSM_base = None  # internal
 
     def side_effect(self, f: Callable):
         """Registers callable f as side effect of transition. f can not be a method on the FSM itself.
@@ -96,12 +116,15 @@ class Transition():  # metaclass=_MetaTransition):
         """Binds Transition to fsm.
          Creates a copy of Transition instance such that each FSM can have its own customized Transitions.
          Also binds all self_effects. """
-        x = deepcopy(self)
-        x._fsm_ref = fsm
-        for e in x._self_effects:
-            # bin all self-effect functions
-            x.side_effects.append(MethodType(e, fsm))
-        return x
+
+        vals = dataclasses.asdict(self)
+        vals['_fsm_ref'] = fsm
+        side_effects = copy.copy(self.side_effects)
+        # bin all self-effect functions
+        side_effects.extend(MethodType(e, fsm) for e in self._self_effects)
+        vals['_self_effects'] = tuple()
+        vals['side_effects'] = tuple(side_effects)if self.frozen else side_effects
+        return Transition(**vals)
 
     # noinspection PyProtectedMember
     def __call__(self, *args, **kwargs) -> tuple[Any]:
@@ -126,7 +149,7 @@ class Transition():  # metaclass=_MetaTransition):
 class Event_Handler:
     """Actual event handler that gets attached to FSM classes. Acts as a Python Descriptor,
      i.e. it will bind to appropriate FSM entity when called."""
-    def __init__(self, fn: Callable, states: set[STATE], fsm: Optional[FSM_base] = None):
+    def __init__(self, fn: Callable, states: set[FSM_STATES], fsm: Optional[FSM_base] = None):
         self.states = states
         self.fn = fn
         self.fsm = fsm
@@ -166,7 +189,7 @@ class Event_Handler:
             self.fsm._is_handling_event = False
 
 
-def event(state: Optional[STATE] = None, states: Sequence[STATE] = tuple()):
+def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tuple()):
     """Decorator that turns methods into event handlers.
     state and states arguments will be merged into a single set.
 

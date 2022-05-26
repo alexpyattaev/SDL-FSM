@@ -1,8 +1,9 @@
 import dataclasses
+from enum import auto
 
 import pytest
 
-from SDL_FSM import FSM_base, STATE, Transition, event
+from SDL_FSM import FSM_base, FSM_STATES, Transition, event
 
 
 @pytest.fixture
@@ -12,11 +13,11 @@ def panda_fsm():
         print(f"{FSM} says WAAAGH {extra_words}")
 
     class Panda(FSM_base):
-        @dataclasses.dataclass
-        class states:
-            HUNGRY: STATE = "Hungry"
-            ANGRY: STATE = "Angry"
-            HAPPY: STATE = "Happy"
+
+        class states(FSM_STATES):
+            HUNGRY = "hungry, looking for food"
+            ANGRY = "angry, looking for trouble"
+            HAPPY = "happy, doing stuff"
 
         hunger_level: int = 0
         anger_level: int = 0
@@ -33,9 +34,12 @@ def panda_fsm():
         def walk(self, **_):
             self.hunger_level += 1
 
+        def get_tired(self, **_):
+            self.anger_level += 1
+
         eat = Transition(src=states.HUNGRY, dst=states.ANGRY).self_effect(get_fed)
         shoot = Transition(src=states.ANGRY, dst=states.HAPPY).side_effect(shout_side_effect)
-        leave = Transition(src=states.HAPPY, dst=states.HUNGRY).self_effect(walk)
+        leave = Transition(src=states.HAPPY, dst=states.HUNGRY).self_effect(walk).self_effect(get_tired)
 
         @event(state=states.HUNGRY)
         def food_sighted(self, **_):
