@@ -1,12 +1,8 @@
 import copy
 import dataclasses
 import enum
-from copy import deepcopy
-from enum import Enum
 from types import MethodType
 from typing import Callable, Optional, Sequence, Any, MutableSequence
-
-CALLABLE = "CALLABLE"
 
 
 class FSM_STATES(str, enum.Enum):
@@ -17,14 +13,22 @@ class FSM_STATES(str, enum.Enum):
 class FSM_base:
     _current_state = None
     _is_handling_event = False
-    _is_valid = True
+    _invalidation_reason = None
 
     class states(FSM_STATES):
         pass
 
+    def invalidate(self, reason):
+        assert reason is not None
+        self._invalidation_reason = reason
+        # TODO: kill all subscriptions
+
     @property
     def valid(self):
-        return self._is_valid
+        return self._invalidation_reason is None
+
+    def __repr__(self):
+        return f"<FSM instance {self.__class__.__name__} at {hex(id(self))}>"
 
     @property
     def state(self):
@@ -36,8 +40,8 @@ class FSM_base:
         self._current_state = v
 
     def _can_transition(self, src):
-        if not self._is_valid:
-            raise RuntimeError("Invalid FSM!")
+        if not self.valid:
+            raise RuntimeError(f"Invalid FSM!, reason {self._invalidation_reason}")
 
         if src != self._current_state:
             raise RuntimeError("Invalid source state")
@@ -62,7 +66,7 @@ class FSM_base:
             g.add_edge(t.src.name, t.dst.name, label=n, effects=t.side_effects)
         return g
 
-    def make_dot_graph(self, name:str=None):
+    def make_dot_graph(self, name: str = None):
         import pydot
         if name is None:
             name = self.__class__.__name__
@@ -112,6 +116,10 @@ class Transition:
         self._self_effects.append(m)
         return self
 
+    def send(self, msg):
+        # TODO something smart
+        return self
+
     def _bind(self, fsm: FSM_base):
         """Binds Transition to fsm.
          Creates a copy of Transition instance such that each FSM can have its own customized Transitions.
@@ -123,7 +131,7 @@ class Transition:
         # bin all self-effect functions
         side_effects.extend(MethodType(e, fsm) for e in self._self_effects)
         vals['_self_effects'] = tuple()
-        vals['side_effects'] = tuple(side_effects)if self.frozen else side_effects
+        vals['side_effects'] = tuple(side_effects) if self.frozen else side_effects
         return Transition(**vals)
 
     # noinspection PyProtectedMember
@@ -141,14 +149,15 @@ class Transition:
             rv = tuple(se(*args, FSM=self._fsm_ref, **kwargs) for se in self.side_effects)
             self._fsm_ref.state = self.dst
             return rv
-        except Exception:
-            self._fsm_ref._is_valid = False
+        except Exception as e:
+            self._fsm_ref.invalidate(e)
             raise
 
 
 class Event_Handler:
     """Actual event handler that gets attached to FSM classes. Acts as a Python Descriptor,
      i.e. it will bind to appropriate FSM entity when called."""
+
     def __init__(self, fn: Callable, states: set[FSM_STATES], fsm: Optional[FSM_base] = None):
         self.states = states
         self.fn = fn
@@ -207,6 +216,3 @@ def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tup
         return Event_Handler(f, states)
 
     return wrapper
-
-
-
