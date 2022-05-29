@@ -2,7 +2,7 @@ import copy
 import dataclasses
 import enum
 from types import MethodType
-from typing import Callable, Optional, Sequence, Any, MutableSequence
+from typing import Callable, Optional, Sequence, Any, MutableSequence, Union, Self
 
 
 class FSM_STATES(str, enum.Enum):
@@ -63,7 +63,7 @@ class FSM_base:
         g = nx.MultiDiGraph()
         g.add_nodes_from(self.states.__members__.keys())
         for n, t in self.transitions.items():
-            g.add_edge(t.src.name, t.dst.name, label=n, effects=t.side_effects)
+            g.add_edge(t.src.name, t.dst.name, label=n, effects=t.effects)
         return g
 
     def make_dot_graph(self, name: str = None):
@@ -78,7 +78,7 @@ class FSM_base:
 
         for n, t in self.transitions.items():
             label = """<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">"""
-            for f in t.side_effects:
+            for f in t.effects:
                 label += f"<TR><TD>{f.__name__}</TD></TR>"
             label += """</TABLE>>"""
             print(label)
@@ -93,62 +93,70 @@ class Transition:
     """
     src: FSM_STATES = None  # source state
     dst: FSM_STATES = None  # destination state
-    side_effects: MutableSequence = dataclasses.field(default_factory=list)  # list of side effects (in order)
-    frozen: bool = False  # prevents modification in runtime
+    effects: MutableSequence = dataclasses.field(default_factory=list)  # list of side effects (in order)
+    frozen: bool = False  # prevents modification in runtime if set
+    _fsm_ref: FSM_base = None  # internal use, reference to FSM instance used during binding
 
-    _self_effects: MutableSequence = dataclasses.field(default_factory=list)  # internal use, list of not-yet-bound methods
-    _fsm_ref: FSM_base = None  # internal
+    def exec(self, f: Union[Callable[[FSM_base, ...], Any], Callable[[Self, ...], Any]]):
+        """Registers callable f as side effect of transition.
 
-    def side_effect(self, f: Callable):
-        """Registers callable f as side effect of transition. f can not be a method on the FSM itself.
+        The callable f can either be a method on the FSM itself,
+        or any function that will take FSM reference as first argument
+        :param f: f function to register
         :returns Transition instance
         """
-        self.side_effects.append(f)
-        return self
-
-    def self_effect(self, m: Callable):
-        """
-        Registers class method m as side effect of transition.
-        :param m: method to register. m must be a method on the FSM class (i.e. not bound).
-        :returns Transition instance
-        """
-        assert self._fsm_ref is None, "Can not register self_effect after Transition is bound to FSM"
-        self._self_effects.append(m)
+        self.effects.append(f)
         return self
 
     def send(self, msg):
-        # TODO something smart
+        """
+        Send a message msg to all its subscribers
+        :param msg:
+        :return: Transition instance
+        """
+        self.effects.append(msg.send)
+        return self
+
+    def send_later(self, msg):
+        """
+        Send msg using asyncio defer logic (call_later).
+
+        This breaks up the call stack, but also allows the receiver to find sending FSM
+         already in target state, rather than in transition
+        :param msg:
+        :return: Transition instance
+        """
+        self.effects.append(msg.send_async)
         return self
 
     def _bind(self, fsm: FSM_base):
         """Binds Transition to fsm.
-         Creates a copy of Transition instance such that each FSM can have its own customized Transitions.
-         Also binds all self_effects. """
-
+         Creates a copy of Transition instance such that each FSM can have its own customized Transition.
+         """
         vals = dataclasses.asdict(self)
-        vals['_fsm_ref'] = fsm
-        side_effects = copy.copy(self.side_effects)
-        # bin all self-effect functions
-        side_effects.extend(MethodType(e, fsm) for e in self._self_effects)
-        vals['_self_effects'] = tuple()
-        vals['side_effects'] = tuple(side_effects) if self.frozen else side_effects
+        vals['_fsm_ref'] = fsm                        
+        vals['effects'] = tuple(self.effects) if self.frozen else copy.copy(self.effects)
         return Transition(**vals)
 
     # noinspection PyProtectedMember
-    def __call__(self, *args, **kwargs) -> tuple[Any]:
+    def __call__(self, *args, **kwargs) -> None:
         """
         Allows Transitions to be called as events, thus forcing FSM to switch states.
 
         Use in cases where events would be overkill for your needs.
         :param args: passed to side_effect functions
-        :param kwargs: passed to side_effect functions
-        :return: tuple of return values from side_effects, in order
+        :param kwargs: passed to side_effect functions        
         """
         self._fsm_ref._can_transition(self.src)
         try:
-            rv = tuple(se(*args, FSM=self._fsm_ref, **kwargs) for se in self.side_effects)
+            for se in self.effects:
+                # effect is a bound method on my own FSM
+                if hasattr(se, "__self__") and se.__self__ is self._fsm_ref:
+                    se(*args, **kwargs)
+                else:  # effect is some other kind of function
+                    se(self._fsm_ref, *args,  **kwargs)
             self._fsm_ref.state = self.dst
-            return rv
+            
         except Exception as e:
             self._fsm_ref.invalidate(e)
             raise
@@ -157,18 +165,19 @@ class Transition:
 class Event_Handler:
     """Actual event handler that gets attached to FSM classes. Acts as a Python Descriptor,
      i.e. it will bind to appropriate FSM entity when called."""
+    ReturnType = Optional[Transition]
 
     def __init__(self, fn: Callable, states: set[FSM_STATES], fsm: Optional[FSM_base] = None):
         self.states = states
         self.fn = fn
         self.fsm = fsm
-        self.name = self.fn.__name__
+        self.__name__ = self.fn.__name__
 
     def __repr__(self):
         if self.fsm is None:
-            return f"<EventHandler {self.name} (unbound) states:{self.states}>"
+            return f"<EventHandler {self.__name__} (unbound) states:{self.states}>"
         else:
-            return f"<EventHandler {self.name} of {self.fsm} states:{self.states}>"
+            return f"<EventHandler {self.__name__} of {self.fsm} states:{self.states}>"
 
     def __get__(self, instance, owner):
         """Returns self, but bound to instance of fsm"""
@@ -198,7 +207,8 @@ class Event_Handler:
             self.fsm._is_handling_event = False
 
 
-def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tuple()):
+
+def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tuple()) -> Callable[[Callable[..., Any]], Event_Handler]:
     """Decorator that turns methods into event handlers.
     state and states arguments will be merged into a single set.
 
@@ -210,7 +220,7 @@ def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tup
     if state is not None:
         states.add(state)
 
-    def wrapper(f: Callable):
+    def wrapper(f: Callable[[Self, ...], EvHandler_ReturnType]) -> Event_Handler:
         """Wraps method f as event handler"""
         print(f"Creating event from {f}")
         return Event_Handler(f, states)

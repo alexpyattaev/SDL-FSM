@@ -1,14 +1,17 @@
 
-from SDL_FSM import FSM_base, FSM_STATES, Transition, event
+from SDL_FSM import FSM_base, FSM_STATES
 from SDL_FSM.message import message, Message
 
 
 def test_binding():
+    """
+    Tests that the messages are bound to FSM instances when appropriate.
+    """
     class Foo(FSM_base):
         class states(FSM_STATES):
             A = "AAAA"
 
-        def __init__(self, name:str):
+        def __init__(self, name: str):
             self.state = self.states.A
             self.name = name
             FSM_base.__init__(self)
@@ -24,8 +27,8 @@ def test_binding():
 
     a = Foo("A")
     b = Foo("B")
-    print(a.poke())
-    print(b.poke())
+    assert a.poke() == "FIXED"
+    assert b.poke() == "FIXED"
 
-    print(a.stuff())
-    print(b.stuff())
+    assert a.stuff() == "A"
+    assert b.stuff() == "B"

@@ -11,7 +11,8 @@ added to override the defaults provided.
 ## States
 Set of FSM states is given by a string enum inherited from FSM_STATE base class:
 ```python
-class states(FSM_STATE):
+from SDL_FSM import FSM_STATES
+class states(FSM_STATES):
     A = "description for A"
     B = "description for B"
 ```
@@ -22,10 +23,16 @@ Any internal variable relevant to FSM functionality (e.g. counters) can be held 
 ## Initialization
 `__init__` method is used to initialize the FSM, as one would expect:
 ```python
-def __init__(self, name: str): # name is a custom parameter
-    self.name = name
-    self.state = self.states.A # must set the initial state
-    FSM_base.__init__(self) # must call inherited constructor
+from SDL_FSM import *
+class example_fsm(FSM_base):
+    class states(FSM_STATES):
+        A = "description for A"
+        B = "description for B" 
+        
+    def __init__(self, name: str): # name is a custom parameter
+        self.name = name
+        self.state = self.states.A # must set the initial state
+        FSM_base.__init__(self) # must call inherited constructor
 ```
 
 ## Transitions
@@ -33,9 +40,22 @@ def __init__(self, name: str): # name is a custom parameter
 Transitions are defined as `Transition` instances that bind the edge in FSM graph and relevant side-effects. Transitions 
 can be created in immutable form with frozen=True, that prevent their modification in runtime. 
 ```python
-eat = Transition(src=states.HUNGRY, dst=states.ANGRY, frozen=True).side_effect(create_garbage)
+from SDL_FSM import *
+def create_garbage(caller:FSM_base):
+    pass
+
+class example_fsm(FSM_base):
+    class states(FSM_STATES):
+        A = "description for A"
+        B = "description for B" 
+    
+    
+    def nasty_smell(self):
+        pass
+    
+    eat = Transition(src=states.A, dst=states.B, frozen=True).exec(create_garbage).exec(nasty_smell)
 ```
-Once a transition is started, it will fire all side-effects in order, and if no exceptions are thrown FSM will enter 
+Once a transition is started, it will execute all side-effects in order, and if no exceptions are thrown FSM will enter 
 the new state. Unlike most other FSM frameworks, there is no on_enter_state callback (as it makes no sense in SDL).
 If transition can not complete due to exceptions, the FSM will be invalidated (as there is no concrete state for it
 to be in). Invalid FSMs will throw exceptions when interacted with.
@@ -46,12 +66,17 @@ form.
 
 To install an event handler, use the following pattern:
 ```python
-@event(states= [ ... ] )
-def some_handler(self, caller=None, **kwargs) -> Optional[Transition]:
-    if self.counter > 5:
-        return self.transition_a
-    else:
-        return None 
+from SDL_FSM import *
+class example_fsm(FSM_base):
+    counter:int = 0 # local variable
+    do_transition = Transition(src=..., dst=..., frozen=True).exec(...)
+    
+    @event(states= [ ... ] )
+    def some_handler(self, *_ , **__) -> Event_Handler.ReturnType:
+        if self.counter > 5:
+            return self.do_transition
+        else:
+            return None 
 ```
 Here states indicates in which states can this event be received. If an event is posted in an inappropriate state, 
 the caller will be notified about that via exception. 
@@ -67,18 +92,23 @@ FSMs are not supposed to be nested into each other like typical objects in an OO
 Linking FSMs is achieved via publish-subscribe mechanism. Any Transition may define a special `send` side-effect as follows:
 
 ```python
-
-# define a static message that will be same for all FSM instances
-poke = Message(payload={"type":"poke"})
-
-# define a magic method that will form message content. 
-# This method will be replaced with Message instance during __init__
-@message 
-def ping_packet(self, *args, **kwargs)->object:
-    return {"type":"ping", "seq":self.counter}
-
-# attach messages to Transitions as follows:
-do_send_ping = Transition(src=states.WAIT, dst=states.WAIT, frozen=True).send(ping_packet).send(poke)
+from SDL_FSM import *
+class example_fsm(FSM_base):
+    class states(FSM_STATES):
+        WAIT = "just wait..."
+    counter:int = 0 # local variable
+    
+    # define a static message that will be same for all FSM instances
+    poke = Message(payload={"type":"poke"})
+    
+    # define a magic method that will form message content. 
+    # This method will be replaced with Message instance during __init__
+    @message 
+    def ping_packet(self, *args, **kwargs)->object:
+        return {"type":"ping", "seq":self.counter}
+    
+    # attach messages to Transitions as follows:
+    do_send_ping = Transition(src=states.WAIT, dst=states.WAIT, frozen=True).send(ping_packet).send(poke)
 ```
 
 This ensures messages are sent, but they do not have any particular destination. To link FSMs, another FSM must be 
@@ -91,17 +121,23 @@ Tx.ICMP_PING_RQ.subscribe(RX.ICMP_PING_RQ)
 or, alternatively, this can also be done in the constructor of the FSM
 
 ```python
-def __init__(self, transmitter):  # transmitter is an instance of another FSM passed in
-    self.tx = transmitter
-    transmitter.ICMP_PING_RQ.subscribe(self.on_ping_request)  # subscribe to ICMP_PING_RQ message (handled by on_ping_request)
-    self.ICMP_PING_REPLY.subscribe(transmitter.on_ping_reply)  # you can also subscribe someone else!
-    FSM_base.__init__(self)  # must call inherited constructor
+from SDL_FSM import *
+class example_fsm(FSM_base):
+    ...
+    def __init__(self, transmitter):  # transmitter is an instance of another FSM passed in
+        self.tx = transmitter
+        transmitter.ICMP_PING_RQ.subscribe(self.on_ping_request)  # subscribe to ICMP_PING_RQ message (handled by on_ping_request)
+        self.ICMP_PING_REPLY.subscribe(transmitter.on_ping_reply)  # you can also subscribe someone else!
+        FSM_base.__init__(self)  # must call inherited constructor
 ```
 or in any of the methods:
 
 ```python
-def unsubscribe_tx(self):
-    self.tx.ICMP_PING_RQ.unsubscribe(self.on_ping_request)        
+from SDL_FSM import *
+class example_fsm(FSM_base):
+    ...
+    def unsubscribe_tx(self):
+        self.tx.ICMP_PING_RQ.unsubscribe(self.on_ping_request)        
 ```
 
 Thus, the subscribtions can be added and removed dynamically at runtime to reflect changes in your program.
