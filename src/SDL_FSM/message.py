@@ -1,12 +1,17 @@
-import functools
-from typing import Callable, Optional
+import sys
+from typing import Callable, Optional, Any
 
 from .statemachine import FSM_base
+
+if sys.version_info < (3, 11, 0):
+    from typing_extensions import Self
+else:
+    from typing import Self
 
 
 class Message:
     """Message instance attached to an FSM instance."""
-    def __init__(self,  payload=None, fn: Callable = None):
+    def __init__(self, payload=None, fn: Callable[[Self], None] = None):
         self.fn = fn
         if fn is not None:
             self.__name__ = fn.__name__
@@ -15,10 +20,6 @@ class Message:
         self.fsm: Optional[FSM_base] = None
         if self.fn is not None:
             self.name = self.fn.__name__
-
-    # def __set_name__(self, owner, name):
-    #     print("set_name", owner, name)
-    #     self.__name__ = name
 
     def __repr__(self):
         if self.fsm is None:
@@ -53,17 +54,10 @@ class Message:
         pass
 
 
-def message(f: Callable) -> Message:
+def message(f: Callable[[Self], Any]) -> Message:
     """Decorator that turns methods into message sources.
     :returns a decorator for method
     """
     msg = Message(fn=f)
-    #functools.update_wrapper(msg, f, assigned=functools.WRAPPER_ASSIGNMENTS, updated=functools.WRAPPER_UPDATES)
-
-    #'__module__', '__name__', '__qualname__', '__doc__',
-    #'__annotations__'
     return msg
-
-
-
 

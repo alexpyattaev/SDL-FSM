@@ -1,16 +1,17 @@
-from typing import Callable, Optional, Sequence, Any, MutableSequence, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from SDL_FSM.base_types import FSM_STATES
 
-if TYPE_CHECKING:
-    from transition import Transition
-    from event_handler import Event_Handler
+
+from .transition import Transition
+from .event_handler import Event_Handler
 
 
 class FSM_base:
     _current_state = None
     _is_handling_event = False
     _invalidation_reason = None
+    _transition_running = None
 
     class states(FSM_STATES):
         pass
@@ -36,7 +37,9 @@ class FSM_base:
         print(f"Transitioning {self._current_state}-> {v}")
         self._current_state = v
 
-    def _can_transition(self, src):
+    def _assert_can_transition(self, src):
+        if self._transition_running is not None:
+            return False
         if not self.valid:
             raise RuntimeError(f"Invalid FSM!, reason {self._invalidation_reason}")
 
@@ -49,6 +52,7 @@ class FSM_base:
         for i in dir(self):
             v = getattr(self, i)
             if isinstance(v, Transition):
+                # noinspection PyProtectedMember
                 tr = v._bind(self)
                 self.transitions[i] = tr
                 setattr(self, i, tr)
@@ -81,5 +85,3 @@ class FSM_base:
             print(label)
             graph.add_edge(pydot.Edge(t.src.name, t.dst.name, label=label, color='blue'))
         return graph
-
-

@@ -109,3 +109,7 @@ class PingSender(FSM_base):
 
     def __repr__(self):
         return f"Sender to {self.target}"
+
+
+ps = PingSender(target=1)
+print(ps.ICMP_PING_RQ())

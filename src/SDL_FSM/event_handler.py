@@ -1,6 +1,13 @@
+import sys
 from typing import TYPE_CHECKING, Optional, Callable, Sequence, Any
 from .base_types import FSM_STATES
 from .transition import Transition
+
+if sys.version_info < (3, 11, 0):
+    from typing_extensions import Self
+else:
+    from typing import Self
+
 if TYPE_CHECKING:
     from .statemachine import FSM_base
 
@@ -61,7 +68,7 @@ def event(state: Optional[FSM_STATES] = None, states: Sequence[FSM_STATES] = tup
     if state is not None:
         states.add(state)
 
-    def wrapper(f: Callable[['FSM_base', ...], Event_Handler.ReturnType]) -> Event_Handler:
+    def wrapper(f: Callable[[Self, ...], Event_Handler.ReturnType]) -> Event_Handler:
         """Wraps method f as event handler"""
         print(f"Creating event from {f}")
         return Event_Handler(f, states)
