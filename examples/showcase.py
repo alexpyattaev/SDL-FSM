@@ -1,5 +1,3 @@
-from typing import Optional
-
 from SDL_FSM import FSM_base, FSM_STATES, Transition, event, message, Message, Event_Handler
 import asyncio
 
@@ -32,7 +30,7 @@ class Timer(FSM_base):
         return self
 
     @event(state=states.IDLE)
-    def arm(self, timeout=None):
+    def arm(self, timeout=None) -> Event_Handler.ReturnType:
         if timeout is not None:
             self.timeout = timeout
         print("Armed timer")
