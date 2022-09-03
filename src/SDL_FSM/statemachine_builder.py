@@ -1,311 +1,545 @@
 from __future__ import annotations
 
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import partial
 from random import random
-from typing import Dict, Generic, ItemsView, List, Literal, NamedTuple, Optional, Set, Type, TypeVar, Callable, Iterable, overload
-from enum import Enum
+from typing import Dict, Generic, ItemsView, List, Literal, NamedTuple, Optional, Set, Tuple, Type, TypeVar, Callable, Iterable, Union, overload
+from enum import Enum, IntEnum
 
 
-StatesEnum = TypeVar('StatesEnum', bound=Enum)
-InputsEnum = TypeVar('InputsEnum', bound=Enum)
-OutputsEnum = TypeVar('OutputsEnum', bound=Enum)
+# TODO: Rename all internal classes to start with "_"
+StatesEnum = TypeVar('StatesEnum', bound=IntEnum)  # Must start with 0 and be sequential (validated in constructor)
+InputsEnum = TypeVar('InputsEnum', bound=IntEnum)
+OutputsEnum = TypeVar('OutputsEnum', bound=IntEnum)
+DataType = TypeVar('DataType')
+# TODO: Refactor to aliases
+# FsmDef = FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]
 
 
-
-# def some_method(cls, x: str) -> str:
-#     return f"result {x}"
-
-# class MyMeta(ABCMeta):
-#     def __new__(mcs, *args, **kwargs):
-#         cls = super().__new__(mcs, *args, **kwargs)
-#         cls.some_method = classmethod(some_method)
-#         return cls
+class NoOutputs(IntEnum):
+    pass
 
 
-# class MyABC(ABC):
-#     @classmethod
-#     def some_method(cls, x: str) -> str:
-#         return x
-
-# class MyClassWithSomeMethod(metaclass=MyMeta):
-#     pass
-
-# mc = MyClassWithSomeMethod()
-# print(mc.some_method("asd"))
-
-# exit()
-
-# -----------------------
-
-# from dataclasses import dataclass
-
-# @dataclass
-# class InventoryItem:
-#     """Class for keeping track of an item in inventory."""
-#     name: str
-#     unit_price: float
-#     quantity_on_hand: int = 0
-
-#     def total_cost(self) -> float:
-#         return self.unit_price * self.quantity_on_hand
-
-# d = InventoryItem("asd", 10, 50)
+class DefinitionError(Exception): 
+    pass
+class TriggerError(Exception):
+    pass
 
 
-# from collections import namedtuple
-# Student = namedtuple('Student', ['name', 'age', 'DOB'])
-# # Adding values
-# S = Student('Nandini', '19', '2541997')
-# # Access using index
-# print("The Student age using index is : ", end="")
-# print(S[1])
-# # Access using name
-# print("The Student name using keyname is : ", end="")
-# print(S.name)
-
-
-# class Base:
-#     a: int = 3
-#     b: str = 'abc'
-
-# class Derived(Base):
-#     pass
-
-# print(Derived.__annotations__)
-
-
-# # constructor
-# def constructor(self, arg):
-#     self.constructor_arg = arg
-  
-# # method
-# def displayMethod(self, arg):
-#     print(arg)
-  
-# # class method
-# @classmethod
-# def classMethod(cls, arg):
-#     print(arg)
-
-# cls_annotations = {'string_attribute': 'str'} ## Added
-  
-# # creating class dynamically
-# Geeks = type("Geeks", (object, ), {
-#     # annotations
-#     "__annotations__": cls_annotations,
-#     # constructor
-#     "__init__": constructor,
-#     # data members
-#     "string_attribute": "Geeks 4 geeks !",
-#     "int_attribute": 1706256,
-#     # member functions
-#     "func_arg": displayMethod,
-#     "class_func": classMethod
-# })
-
-# # creating objects
-# obj = Geeks("constructor argument")
-# print(obj.constructor_arg)
-# print(obj.string_attribute)
-# print(obj.int_attribute)
-# obj.func_arg("Geeks for Geeks")
-# print(obj.__annotations__)
-# Geeks.class_func("Class Dynamically Created !")
-
-# exit()
-
-#----------------
-
-# class TestMeta(type):
-#     def __new__(cls, name, bases, cls_dict):
-#         class_ = super().__new__(cls, name, bases, cls_dict)
-#         print("Meta")
-#         return class_
-
-# def test_decorator(func):
-#     print("Decorator")
-#     return func
-
-# class Test(Generic[StatesEnum, OutputsEnum], metaclass=TestMeta):
-#     @overload
-#     def __init__(self, states: Type[StatesEnum]) -> None: ...
-#     @overload
-#     def __init__(self, states: Type[StatesEnum], outputs: Type[OutputsEnum]) -> None: ...
-#     def __init__(self, states: Type[StatesEnum], outputs: Optional[Type[OutputsEnum]] = None) -> None:
-#         print("Constructor")
-#         self.states: Type[StatesEnum] = states
-#         self.outputs: Optional[Type[OutputsEnum]] = outputs  
-#         # if self.outputs is None:
-#         #     self.print = self._not_print
-
-#     def _not_print(self, val: StatesEnum):
-#         self.print(val, None)
-
-#     @test_decorator
-#     def print(self, val: StatesEnum, val2: OutputsEnum):
-#         print(f"{self.states}: {val}")
-#         if self.outputs is not None:
-#             print(f"{self.outputs}")
-#         else:
-#             print(f"None")
-
-# class Color(Enum):
-#     RED = 1
-#     GREEN = 2
-#     BLUE = 3
-
-# class ColorNot(Enum):
-#     REDNOT = 1
-#     GREENNOT = 2
-#     BLUENOT = 3
-
-# a = Test(Color)
-# a.print(Color.RED, None)
-
-# b = Test(Color, ColorNot)
-# b.print(Color.GREEN, ColorNot.BLUENOT)
-# b.print(Color.GREEN, ColorNot.REDNOT)
-
-# exit()
-
-# --------------------------
-
-
-class FsmDefinition(Generic[StatesEnum, InputsEnum, OutputsEnum]):
-    def __init__(self, states: Type[StatesEnum], inputs: Type[InputsEnum], \
-            outputs: Optional[Type[OutputsEnum]] = None, initial_state: Optional[StatesEnum] = None, name: Optional[str] = None, \
-            auto_rebuild: bool = True, raise_on_invalid_input: bool = True) -> None:
+class FsmDefinition(Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, states: Type[StatesEnum], inputs: Type[InputsEnum], outputs: Type[OutputsEnum] = NoOutputs, \
+            data: Optional[Type[DataType]] = None, initial_state: Optional[StatesEnum] = None, name: Optional[str] = None, \
+            auto_finalize: bool = True, raise_on_invalid_input: bool = True) -> None:
+        if self._validate_enum(states) is False:
+            raise RuntimeError()
         self._states_type: Type[StatesEnum] = states
+        if self._validate_enum(inputs) is False:
+            raise RuntimeError()
         self._inputs_type: Type[InputsEnum] = inputs
-        self._outputs_type: Optional[Type[OutputsEnum]] = outputs
+        if outputs is not None and self._validate_enum(outputs) is False:
+            raise RuntimeError()
+        self._outputs_type: Type[OutputsEnum] = outputs
+        self._data_type: Optional[Type[DataType]] = data
 
-        self._initial_state: Optional[StatesEnum] = initial_state
-        
-        # TODO: Hide definitions from public - make separate configurator objects and additional views for internal use
-        self._states_definition: Dict[StatesEnum, StateDefinition[InputsEnum]] = {state : StateDefinition[InputsEnum]() for state in states}
-        self._inputs_definition: Dict[InputsEnum, InputDefinition] = {input : InputDefinition() for input in inputs}
-        if outputs is None:
-            self._outputs_definition: Optional[Dict[OutputsEnum, OutputDefinition]] = None
-        else:
-            self._outputs_definition = {output : OutputDefinition() for output in outputs}
+        self._inputs_in_state: List[Set[InputsEnum]] = [set() for _ in self._inputs_type]
+        self._input_expression: List[Optional[Expression]] = [None for _ in self._inputs_type]
+        self._input_expression_runner: List[Optional[ExpressionRunner]] = [None for _ in self._inputs_type]
+        self._output_callbacks: List[Set[Callable]] = [set() for _ in self._outputs_type]
 
-        self._ready: bool = False
-        self._auto_rebuild: bool = auto_rebuild
-        self._raise_on_invalid_input: bool = raise_on_invalid_input
+        self.initial_state: Optional[StatesEnum] = initial_state
         
         self._name: Optional[str] = name
 
+        self._auto_finalize: bool = auto_finalize
+        self._raise_on_invalid_input: bool = raise_on_invalid_input
+
+        self._ready: bool = False
+
     @property
-    def name(self):
+    def name(self) -> Optional[str]:
         return self._name
 
-    def configure_state(self, state: StatesEnum) -> StateDefinition[InputsEnum]:
-        try:
-            return self._states_definition[state]
-        except KeyError:
-            raise KeyError()
+    # TODO: repr
 
-    def configure_input(self, input: InputsEnum) -> InputDefinition:
-        try:
-            return self._inputs_definition[input]
-        except KeyError:
-            raise KeyError()
+    @property
+    def states(self) -> Type[StatesEnum]:
+        return self._states_type
 
-    def configure_output(self, output: OutputsEnum) -> OutputDefinition:
-        if self._outputs_definition is None:
-            raise KeyError()
+    @property
+    def inputs(self) -> Type[InputsEnum]:
+        return self._inputs_type
+
+    @property
+    def outputs(self) -> Type[OutputsEnum]:
+        return self._outputs_type
+
+    def _validate_enum(self, enum: Type[IntEnum]) -> bool:
+        for i, val in enumerate(enum):
+            if i != val:
+                return False
+        return True
+    
+    def set_state(self, state: StatesEnum, inputs: Iterable[InputsEnum]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        if self._ready is True:
+            raise DefinitionError(f"Cannot update a finalized Fsm Definition {self}")
+
+        inputs_in_state = self._inputs_in_state[state]
+        if len(inputs_in_state) > 0:
+            inputs_in_state.clear()
+        inputs_in_state.update(inputs)
+
+        return self
+
+    @overload
+    def add_state_input(self, state: StatesEnum, input: InputsEnum) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...    
+    @overload
+    def add_state_input(self, state: StatesEnum, input: Iterable[InputsEnum]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def add_state_input(self, state: StatesEnum, input: Union[InputsEnum, Iterable[InputsEnum]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        if self._ready is True:
+            raise DefinitionError(f"Cannot update a finalized Fsm Definition {self}")
+
+        inputs_in_state = self._inputs_in_state[state]
+        if isinstance(input, Iterable):
+            inputs_in_state.update(input)
+        else:
+            inputs_in_state.add(input)
         
-        try:
-            return self._outputs_definition[output]
-        except KeyError:
-            raise KeyError()
+        return self
 
-    def set_initial_state(self, state: StatesEnum):
-        self._initial_state = state
+    @overload
+    def remove_state_input(self, state: StatesEnum, input: InputsEnum) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    @overload
+    def remove_state_input(self, state: StatesEnum, input: Iterable[InputsEnum]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def remove_state_input(self, state: StatesEnum, input: Union[InputsEnum, Iterable[InputsEnum]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        if self._ready is True:
+            raise DefinitionError(f"Cannot update a finalized Fsm Definition {self}")
 
-    def build(self):
-        self._ready = False
+        inputs_in_state = self._inputs_in_state[state]
+        if isinstance(input, Iterable):
+            inputs_in_state.difference_update(input)
+        else:
+            inputs_in_state.discard(input)
 
-        named_expressions: Dict[object, Expression]  = {input: input_definition.expression for input, input_definition in self._inputs_definition.items()}  # type: ignore
-        builder = ExpressionBuilder(named_expressions)
+        return self
 
+    def set_input(self, input: InputsEnum, expr: Expression) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        if self._ready is True:
+            raise DefinitionError(f"Cannot update a finalized Fsm Definition {self}")
+        self._input_expression[input] = expr
+
+        return self
+
+    def set_output(self, output: OutputsEnum, callbacks: Iterable[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if len(output_callbacks) > 0:
+            output_callbacks.clear()
+        output_callbacks.update(callbacks)
+
+        return self
+
+    @overload
+    def add_output_callback(self, output: OutputsEnum, callback: Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    @overload
+    def add_output_callback(self, output: OutputsEnum, callback: Iterable[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def add_output_callback(self, output: OutputsEnum, callback: Union[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None], Iterable[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if isinstance(callback, Iterable):
+            output_callbacks.update(callback)
+        else:
+            output_callbacks.add(callback)
+        
+        return self
+
+    @overload
+    def remove_output_callback(self, output: OutputsEnum, callback: Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    @overload
+    def remove_output_callback(self, output: OutputsEnum, callback: Iterable[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def remove_output_callback(self, output: OutputsEnum, callback: Union[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None], Iterable[Callable[[FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]], None]]]) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if isinstance(callback, Iterable):
+            output_callbacks.difference_update(callback)
+        else:
+            output_callbacks.discard(callback)
+        
+        return self
+
+    def finalize(self) -> None:
+        if self._ready is True:
+            raise DefinitionError(f"Cannot finalize an already finalized Fsm Definition {self}")
+
+        named_expressions: Dict[InputsEnum, Expression] = {}
+        for input in self._inputs_type:
+            expression = self._input_expression[input]
+            if expression is None:
+                raise DefinitionError(f"Cannot finalize Fsm Definition {self}, as Input {input} is not defined")
+            else:
+                named_expressions[input] = expression
+        
+        builder = CallableExpressionBuilder(self._states_type, self._inputs_type, self._outputs_type, self._data_type, named_expressions)
         try:
             builder.build()
         except ExpressionBuildError as err:
-            raise RuntimeError(err)
+            raise DefinitionError(f"Cannot finalize Fsm Definition {self}, due to build error: {err}")
         
-        named_built_expressions = builder.get_built_expressions()
-        names = set()
-        for name, built_expression in named_built_expressions:
+        named_expression_runners = builder.get_named_expression_runners()
+        names: Set[InputsEnum] = set()
+        for name, expression_runner in named_expression_runners:
             if name in names:
-                raise RuntimeError(f"Duplicate name {name} encountered after building expresions")
+                raise DefinitionError(f"Cannot finalize Fsm Definition {self}, as duplicate Input {name} encountered after building expressions")
             else:
                 names.add(name)
             
-            try:
-                input_definition: InputDefinition = self._inputs_definition[name]  # type:ignore  # TODO: Any other way to do this?
-            except KeyError:
-                raise RuntimeError(f"Unable to match built expression name {name} to input")
-            input_definition.built_expression = built_expression
+            self._input_expression_runner[name] = expression_runner
         
-        if names ^ self._inputs_definition.keys():
-            for input_definition in self._inputs_definition.values():
-                input_definition.built_expression = None
+        if len(names ^ set(self._inputs_type)) > 0:
+            self._input_expression_runner = [None for _ in self._inputs_type]
 
-            raise RuntimeError(f"Built names {names} do not coninside with inputs {self._inputs_definition.keys()}")
+            raise DefinitionError(f"Cannot finalize Fsm Definition {self}, as built Inputs {names} do not coinside with defined Inputs {self._inputs_type}")
 
         self._ready = True
 
-    def trigger(self, fsm_implementation: FsmImplementation, input: InputsEnum):
-        if self._ready is False:
-            if self._auto_rebuild is True:
-                self.build()
-            else:
-                raise RuntimeError()
-        
-        # TODO: Handle busy correctly, i.e. add queueable property or immediate or throw
-        if fsm_implementation.busy is True:
-            raise RuntimeError()
-        fsm_implementation.busy = True
+    def _trigger_output(self, fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType], output: OutputsEnum) -> None:
+        for callback in self._output_callbacks[output]:
+            callback(fsm_implementation)
+        for callback in fsm_implementation._output_callbacks[output]:
+            callback(fsm_implementation)
 
-        state_definition = self._states_definition[fsm_implementation.state]
-        if input in state_definition.inputs:
-            input_definition = self._inputs_definition[input]
-        else:
+    def _trigger_state(self, fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType], state: Optional[StatesEnum]) -> None:
+        if state is not None:
+            fsm_implementation._state = state
+
+    def _trigger_input(self, fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType], input: InputsEnum) -> bool:
+        # TODO: Handle busy correctly, i.e. add queueable property or immediate or throw
+        if fsm_implementation._busy is True:
+            raise RuntimeError()
+        fsm_implementation._busy = True
+
+        if input not in self._inputs_in_state[fsm_implementation._state]:
             if self._raise_on_invalid_input is True:
-                raise KeyError()
+                raise TriggerError()
             else:
+                fsm_implementation._busy = False
                 return False
         
-        for on_input in input_definition.on_input:
-            on_input(self, fsm_implementation, input)
-        for on_input in fsm_implementation.configure_input(input).on_input:
-            on_input(self, fsm_implementation, input)
+        old_state = fsm_implementation._state
 
-        runnable_expression = input_definition.built_expression(self, fsm_implementation)  # type:ignore  # TODO: why?
-        while runnable_expression is not None:
-            runnable_expression = input_definition.built_expression(self, fsm_implementation)  # type:ignore
-        
-        fsm_implementation.busy = False
+        expression_runner = self._input_expression_runner[input]
+        # if expression_runner is None:
+        #     raise RuntimeError()
+        fsm_controller = FsmController(self, fsm_implementation)
+        expression_runner(fsm_implementation._data, fsm_controller)  # type:ignore
+        fsm_controller.invalidate()
 
-        return True
-
-    def implement(self, initial_state: Optional[StatesEnum] = None):        
-        if initial_state is not None:
-            fsm_implementation = FsmImplementation(self._states_type, self._inputs_type, self._outputs_type, initial_state)
-        elif self._initial_state is not None:
-            fsm_implementation = FsmImplementation(self._states_type, self._inputs_type, self._outputs_type, self._initial_state)
+        fsm_implementation._busy = False
+        if fsm_implementation._state == old_state:
+            return False
         else:
-            raise RuntimeError()
+            return True
 
-        return Fsm(self, fsm_implementation)
+    def implement(self, initial_state: Optional[StatesEnum] = None, name: Optional[str] = None) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        if self._ready is False:
+            if self._auto_finalize is True:
+                self.finalize()
+            else:
+                raise DefinitionError(f"Cannot implement a not finalized Fsm Definition {self}")
+
+        if initial_state is not None:
+            impl_state: StatesEnum = initial_state
+        elif self.initial_state is not None:
+            impl_state = self.initial_state
+        else:
+            raise DefinitionError(f"Cannot implement Fsm Definition {self} without an initial state")
+        if name is not None:
+            impl_name: str = name
+        elif self._name is not None:
+            impl_name = self._name
+        else:
+            raise DefinitionError(f"Cannot implement Fsm Definition {self} without a name")
+        fsm_implementation = FsmImplementation(self, \
+            self._states_type, self._inputs_type, self._outputs_type, \
+            self._data_type, impl_state, impl_name)
+
+        return fsm_implementation
+
+
+class FsmImplementation(Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType], \
+            states: Type[StatesEnum], inputs: Type[InputsEnum], outputs: Type[OutputsEnum], \
+            data: Optional[Type[DataType]], initial_state: StatesEnum, name: Optional[str] = None) -> None:
+        self._fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType] = fsm_definition
+        
+        self._state: StatesEnum = initial_state
+        self._output_callbacks: List[Set[Callable]] = [set() for _ in outputs]
+        if data is None:
+            self._data: Optional[DataType] = None
+        else:
+            self._data = data()
+
+        self._busy: bool = False
+
+        self._name: Optional[str] = name
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
+
+    # TODO: repr
+
+    @property
+    def state(self) -> StatesEnum:
+        return self._state
+
+    @property
+    def busy(self) -> bool:
+        return self._busy
+
+    def get_definition(self) -> FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        return self._fsm_definition
+
+    def set_output(self, output: OutputsEnum, callbacks: Iterable[Callable]) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if len(output_callbacks) > 0:
+            output_callbacks.clear()
+        output_callbacks.update(callbacks)
+
+        return self
+
+    @overload
+    def add_output_callback(self, output: OutputsEnum, callback: Callable) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    @overload
+    def add_output_callback(self, output: OutputsEnum, callback: Iterable[Callable]) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def add_output_callback(self, output: OutputsEnum, callback: Union[Callable, Iterable[Callable]]) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if isinstance(callback, Iterable):
+            output_callbacks.update(callback)
+        else:
+            output_callbacks.add(callback)
+        
+        return self
+
+    @overload
+    def remove_output_callback(self, output: OutputsEnum, callback: Callable) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    @overload
+    def remove_output_callback(self, output: OutputsEnum, callback: Iterable[Callable]) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        ...
+    def remove_output_callback(self, output: OutputsEnum, callback: Union[Callable, Iterable[Callable]]) -> FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        output_callbacks = self._output_callbacks[output]
+        if isinstance(callback, Iterable):
+            output_callbacks.difference_update(callback)
+        else:
+            output_callbacks.discard(callback)
+        
+        return self
+
+    def trigger(self, input: InputsEnum) -> bool:
+        return self._fsm_definition._trigger_input(self, input)
+
+
+class ExpressionType(IntEnum):
+    Default = 0
+    Action = 1
+    Output = 2
+    State = 3
+    Condition = 4
+    Label = 5
+    Jump = 6
+
+
+class Expression(ABC, Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, expression_type: ExpressionType) -> None:
+        self._type: ExpressionType = expression_type
+
+    @property
+    def type(self) -> ExpressionType:
+        return self._type
+        
+
+class ChainExpression(Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, expression_type: ExpressionType) -> None:
+        self.next: Optional[Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
+        self._tail: Optional[ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
+
+        super().__init__(expression_type)
+
+    def _extend_tail(self, expression: ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+        # TODO: Somehow forbid intermediate next and tail assignment
+        if self._tail is None:
+            if self.next is not None:
+                raise RuntimeError() # TODO: Some other kind of exception
+            
+            self.next = expression
+            self._tail = expression
+        else:
+            if self._tail.next is not None:
+                raise RuntimeError()
+            
+            self._tail.next = expression
+            self._tail = expression
+
+    def _finish_tail(self, expression: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+        if self._tail is None:
+            if self.next is not None:
+                raise RuntimeError()
+            
+            self.next = expression
+        else:
+            if self._tail.next is not None:
+                raise RuntimeError()
+            
+            self._tail.next = expression
+
+    def Action(self, callable: Callable[[DataType], None]) -> ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        self._extend_tail(Action(callable))
+
+        return self
+    
+    def Output(self, output: OutputsEnum) -> ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        self._extend_tail(Output(output))
+
+        return self
+
+    def Label(self, label: str) -> ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        self._extend_tail(Label(label))
+
+        return self
+
+    def Condition(self, condition: Callable[[DataType], bool], next_true: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType], next_false: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]:
+        self._extend_tail(Condition(condition, next_true, next_false))
+        
+        return self
+
+    def State(self, state: Optional[StatesEnum]) -> Expression:
+        self._finish_tail(State(state))
+
+        return self
+
+    def Jump(self, target: str) -> Expression:
+        self._finish_tail(Jump(target))
+
+        return self
+
+
+class Action(ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    # TODO: Add parameters to this (and to Fsm trigger)
+    def __init__(self, callable: Callable[[DataType], None]) -> None:
+        super().__init__(expression_type=ExpressionType.Action)
+
+        self.callable: Callable[[DataType], None] = callable
+        self.next: Optional[Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
+
+
+class Output(ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, output: OutputsEnum) -> None:
+        super().__init__(expression_type=ExpressionType.Output)
+
+        self.output: OutputsEnum = output
+        self.next: Optional[Expression] = None
+
+
+class Label(ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, label: str) -> None:
+        super().__init__(expression_type=ExpressionType.Label)
+
+        self.label: str = label
+        self.next: Optional[Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
+
+
+class Condition(ChainExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, condition: Callable[[DataType], bool], next_true: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType], next_false: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> None:
+        super().__init__(expression_type=ExpressionType.Condition)
+
+        self.condition: Callable[[DataType], bool] = condition
+        self.next_true: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType] = next_true
+        self.next_false: Expression[StatesEnum, InputsEnum, OutputsEnum, DataType] = next_false
+
+
+# TODO: Decide class
+# .Decide(some_callable, 
+# {
+#     1: bla,
+#     2: foo,
+#     3: boo,
+# }
+# )
+
+
+class Jump(Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, target: str) -> None:
+        super().__init__(expression_type=ExpressionType.Jump)
+
+        self.target: str = target
+
+
+class State(Expression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, state: Optional[StatesEnum]) -> None:
+        super().__init__(expression_type=ExpressionType.State)
+
+        self.state: Optional[StatesEnum] = state
+
+
+class FsmController(Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType], fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> None:
+        self._fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum, DataType] = fsm_definition
+        self._fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum, DataType] = fsm_implementation
+        self._valid = True
+
+    # TODO: repr
+
+    def trigger_output(self, output: OutputsEnum) -> None:
+        if self._valid is True:
+            self._fsm_definition._trigger_output(self._fsm_implementation, output)
+        else:
+            raise TriggerError(f"Fsm Controller {self} is invalid")
+
+    def trigger_state(self, state: Optional[StatesEnum]) -> None:
+        if self._valid is True:
+            self._fsm_definition._trigger_state(self._fsm_implementation, state)
+        else:
+            raise TriggerError(f"Fsm Controller {self} is invalid")
+
+    def invalidate(self) -> None:
+        self._valid = False
+
+
+class ExpressionRunner(ABC, Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    @abstractmethod
+    def __init__(self) -> None:
+        pass
+    
+    @abstractmethod
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> None:
+        pass
+
+
+class ExpressionBuilder(ABC, Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    @abstractmethod
+    def __init__(self, states: Type[StatesEnum], inputs: Type[InputsEnum], outputs: Type[OutputsEnum], data: Optional[Type[DataType]], \
+            named_expressions: Dict[InputsEnum, Expression]) -> None:
+        pass
+
+    @abstractmethod
+    def build(self) -> bool:
+        pass
+
+    @abstractmethod
+    def get_named_expression_runners(self) -> ItemsView[InputsEnum, ExpressionRunner]:
+        pass
 
 
 class ExpressionError(Exception):
     pass
-
-
 class ExpressionBuildError(Exception):
     pass
 
@@ -313,32 +547,32 @@ class ExpressionBuildError(Exception):
 class CallableExpressionPoint(NamedTuple):
     previous_callable_expression: Optional[CallableExpression]
     next_id: int
-
 class ExpressionPoint(NamedTuple):
     previous_callable_expression_point: CallableExpressionPoint
     current_expression: Expression
 
 
-class ExpressionBuilder:
-    def __init__(self, named_expressions: Dict[object, Expression]) -> None:
-        self._named_expressions: Dict[object, Expression] = named_expressions
-        self._named_built_expressions: Dict[object, CallableExpression] = {}
+class CallableExpressionBuilder(ExpressionBuilder[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, states: Type[StatesEnum], inputs: Type[InputsEnum], outputs: Type[OutputsEnum], data: Optional[Type[DataType]], \
+            named_expressions: Dict[InputsEnum, Expression]) -> None:
+        self._named_expressions: Dict[InputsEnum, Expression] = named_expressions
+        self._named_expression_runners: Dict[InputsEnum, ExpressionRunner[StatesEnum, InputsEnum, OutputsEnum, DataType]] = {}
 
         self._labels: Dict[str, CallableExpression] = {}
         """Label name to built expression mapping. Collects all labels as they are met traversing raw expressions."""
         self._jumps: Dict[CallableExpressionPoint, str] = {}
         """Built expressions mapped to their next jump name that is not known yet. Will be connected in final pass."""
-        self._shortcuts: Dict[object, str] = {}
+        self._shortcuts: Dict[InputsEnum, str] = {}
         """Stores names of raw expressions that have a jump as their head. Will be connected in final pass."""
 
-        self._current_name: object = None
+        self._current_name: Optional[InputsEnum] = None
         self._pending_label: Optional[str] = None
 
     def _connect_callable_expressions(self, previous_callable_expression_point: CallableExpressionPoint, current_callable_expression: CallableExpression):
         if previous_callable_expression_point.previous_callable_expression is not None:
             if isinstance(previous_callable_expression_point.previous_callable_expression, (CallableAction, CallableOutput, CallableState)):
-                previous_callable_expression_point.previous_callable_expression.next = current_callable_expression
-            elif isinstance(previous_callable_expression_point.previous_callable_expression, CallableIf):
+                previous_callable_expression_point.previous_callable_expression.next = current_callable_expression  # type:ignore
+            elif isinstance(previous_callable_expression_point.previous_callable_expression, CallableCondition):
                 if previous_callable_expression_point.next_id == 0:
                     previous_callable_expression_point.previous_callable_expression.next_true = current_callable_expression
                 else:
@@ -346,7 +580,9 @@ class ExpressionBuilder:
             else:
                 raise ExpressionError(f"Cannot assign next expression to callable expression {previous_callable_expression_point.previous_callable_expression}.")         
         else:
-            self._named_built_expressions[self._current_name] = current_callable_expression
+            if self._current_name is None:
+                raise RuntimeError()
+            self._named_expression_runners[self._current_name] = CallableExpressionRunner(current_callable_expression)
 
     def _build_expression(self, previous_callable_expression_point: CallableExpressionPoint, expression: Expression) -> Optional[CallableExpression]:
         if isinstance(expression, Label):
@@ -363,6 +599,8 @@ class ExpressionBuilder:
                 raise ExpressionError(f"Jump {expression} cannot be labeled")
 
             if previous_callable_expression_point.previous_callable_expression is None:
+                if self._current_name is None:
+                    raise RuntimeError()
                 self._shortcuts[self._current_name] = expression.target
 
                 return None
@@ -380,8 +618,8 @@ class ExpressionBuilder:
             callable_expression = CallableOutput(expression.output)
         elif isinstance(expression, State):
             callable_expression = CallableState(expression.state)
-        elif isinstance(expression, If):
-            callable_expression = CallableIf(expression.condition)
+        elif isinstance(expression, Condition):
+            callable_expression = CallableCondition(expression.condition)
         else:
             raise ExpressionError(f"Unsupported type of expression {expression}")
         
@@ -400,13 +638,13 @@ class ExpressionBuilder:
                 self._current_name = name
                 self._pending_label = None
 
-                visited_expressions: Set[Expression] = set((head_expression, ))
+                visited_expressions = set((head_expression, ))
                 def check_visited(expression: Expression):
                     if expression in visited_expressions:
                         raise ExpressionError(f"Expression loop detected at {expression}")
                     else:
                         visited_expressions.add(expression)
-                to_visit_stack: List[ExpressionPoint] = [ExpressionPoint(CallableExpressionPoint(None, 0), head_expression)]
+                to_visit_stack = [ExpressionPoint(CallableExpressionPoint(None, 0), head_expression)]
 
                 while to_visit_stack:
                     expression_point = to_visit_stack.pop()
@@ -418,17 +656,25 @@ class ExpressionBuilder:
                     
                     if isinstance(current_expression, (Action, Output)):
                         next_expression = current_expression.next
+                        if next_expression is None:
+                            raise ExpressionBuildError(f"Missing next expression for expression {current_expression}")
                         check_visited(next_expression)
                         to_visit_stack.append(ExpressionPoint(CallableExpressionPoint(current_callable_expression, 0), next_expression))
                     elif isinstance(current_expression, Label):
                         next_expression = current_expression.next
+                        if next_expression is None:
+                            raise ExpressionBuildError(f"Missing next expression for expression {current_expression}")
                         check_visited(next_expression)
                         to_visit_stack.append(ExpressionPoint(previous_callable_expression_point, next_expression))
-                    elif isinstance(current_expression, If):
+                    elif isinstance(current_expression, Condition):
                         next_expression = current_expression.next_true
+                        if next_expression is None:
+                            raise ExpressionBuildError(f"Missing next expression for expression {current_expression}")
                         check_visited(next_expression)
                         to_visit_stack.append(ExpressionPoint(CallableExpressionPoint(current_callable_expression, 0), next_expression))
                         next_expression = current_expression.next_false
+                        if next_expression is None:
+                            raise ExpressionBuildError(f"Missing next expression for expression {current_expression}")
                         check_visited(next_expression)
                         to_visit_stack.append(ExpressionPoint(CallableExpressionPoint(current_callable_expression, 1), next_expression))
                     elif isinstance(current_expression, (State, Jump)):
@@ -442,362 +688,77 @@ class ExpressionBuilder:
                     resolved_target = self._labels[target]
                 except KeyError:
                     raise ExpressionError(f"Unable to resolve label {target}")
-                self._named_built_expressions[name] = resolved_target
-            for callable_expression_point, target in self._jumps:
+                self._named_expression_runners[name] = CallableExpressionRunner(resolved_target)
+            for callable_expression_point, target in self._jumps.items():
                 try:
                     resolved_target = self._labels[target]
                 except KeyError:
                     raise ExpressionError(f"Unable to resolve label {target}")
                 self._connect_callable_expressions(callable_expression_point, resolved_target)
         except ExpressionError as error:
-            raise ExpressionBuildError(f"Error while building expression {name}: {error}")
+            raise ExpressionBuildError(f"Error while building expression {name}: {error}")  # TODO: name can be unbound error
 
-    def get_built_expressions(self) -> ItemsView[object, CallableExpression]:
-        return self._named_built_expressions.items()
+    def get_named_expression_runners(self) -> ItemsView[InputsEnum, ExpressionRunner[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
+        return self._named_expression_runners.items()
 
 
-class StateDefinition(Generic[InputsEnum]):
-    def __init__(self) -> None:
-        # TODO: How to add typing to this class? Based on FsmDefinition
-        self.inputs: Set[InputsEnum] = set()
-        self.on_enter: Set[Callable] = set()  # TODO: Specify Callable
-        self.on_exit: Set[Callable] = set()
-
-    def add_input(self, input: InputsEnum):
-        if isinstance(input, Iterable):
-            self.inputs.update(input)
-        else:
-            self.inputs.add(input)
-        return self
-
-    def remove_input(self, input: InputsEnum):
-        if isinstance(input, Iterable):
-            self.inputs.difference_update(input)
-        else:
-            self.inputs.discard(input)
-        return self
-
-    def add_on_enter(self, func: Callable):
-        self.on_enter.add(func)
-        return self
-
-    def remove_on_enter(self, func: Callable):
-        self.on_enter.discard(func)
-        return self
-
-    def add_on_exit(self, func: Callable):
-        self.on_exit.add(func)
-        return self
-
-    def remove_on_exit(self, func: Callable):
-        self.on_exit.discard(func)
-        return self
-
-
-class InputDefinition:
-    def __init__(self) -> None:
-        self.expression: Optional[Expression] = None
-        self.built_expression: Optional[CallableExpression] = None
-        self.on_input: Set[Callable] = set()
-
-    def set_expression(self, expr: Expression):
-        self.expression = expr
-        return self
-
-    def add_on_input(self, func: Callable):
-        self.on_input.add(func)
-        return self
-
-    def remove_on_input(self, func: Callable):
-        self.on_input.discard(func)
-        return self
-
-class OutputDefinition:
-    def __init__(self) -> None:
-        self.on_output: Set[Callable] = set()
-
-    def add_on_output(self, func: Callable):
-        self.on_output.add(func)
-        return self
-
-    def remove_on_output(self, func: Callable):
-        self.on_output.discard(func)
-        return self
-
-
-class FsmImplementation(Generic[StatesEnum, InputsEnum, OutputsEnum]):
-    def __init__(self, states: Type[StatesEnum], inputs: Type[InputsEnum], outputs: Optional[Type[OutputsEnum]], initial_state: StatesEnum) -> None:
-        self.state: StatesEnum = initial_state
-
-        self.busy: bool = False
-
-        self._states_implementaion: Dict[StatesEnum, StateImplementation] = {state : StateImplementation() for state in states}
-        self._inputs_implementaion: Dict[InputsEnum, InputImplementation] = {input : InputImplementation() for input in inputs}
-        if outputs is None:
-            self._outputs_implementaion: Optional[Dict[OutputsEnum, OutputImplementation]] = None
-        else:
-            self._outputs_implementaion = {output : OutputImplementation() for output in outputs}
-
-    def configure_state(self, state: StatesEnum):
-        try:
-            return self._states_implementaion[state]
-        except KeyError:
-            raise KeyError()
-
-    def configure_input(self, input: InputsEnum):
-        try:
-            return self._inputs_implementaion[input]
-        except KeyError:
-            raise KeyError()
-
-    def configure_output(self, output: OutputsEnum):
-        if self._outputs_implementaion is None:
-            raise KeyError()
-        try:
-            return self._outputs_implementaion[output]
-        except KeyError:
-            raise KeyError()
-
-
-class StateImplementation:
-    def __init__(self) -> None:
-        self.on_enter = set()
-        self.on_exit = set()
-
-    def add_on_enter(self, func: Callable):
-        self.on_enter.add(func)
-        return self
-
-    def remove_on_enter(self, func: Callable):
-        self.on_enter.discard(func)
-        return self
-
-    def add_on_exit(self, func: Callable):
-        self.on_exit.add(func)
-        return self
-
-    def remove_on_exit(self, func: Callable):
-        self.on_exit.discard(func)
-        return self
-
-
-class InputImplementation:
-    def __init__(self) -> None:
-        self.on_input = set()
-
-    def add_on_input(self, func: Callable):
-        self.on_input.add(func)
-        return self
-
-    def remove_on_input(self, func: Callable):
-        self.on_input.discard(func)
-        return self
-
-
-class OutputImplementation:
-    def __init__(self) -> None:
-        self.on_output = set()
-
-    def add_on_output(self, func: Callable):
-        self.on_output.add(func)
-        return self
-
-    def remove_on_output(self, func: Callable):
-        self.on_output.discard(func)
-        return self
-
-
-class Fsm(Generic[StatesEnum, InputsEnum, OutputsEnum]):
-    def __init__(self, fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum], \
-            fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum]) -> None:
-        self._fsm_definition: FsmDefinition[StatesEnum, InputsEnum, OutputsEnum] = fsm_definition
-        self._fsm_implementation: FsmImplementation[StatesEnum, InputsEnum, OutputsEnum] = fsm_implementation
-
-    def configure_state(self, state: StatesEnum) -> StateImplementation:
-        return self._fsm_implementation.configure_state(state)
-
-    def configure_input(self, input: InputsEnum) -> InputImplementation:
-        return self._fsm_implementation.configure_input(input)
-
-    def configure_output(self, output: OutputsEnum) -> OutputImplementation:
-        return self._fsm_implementation.configure_output(output)
-
-    @property
-    def state(self):
-        return self._fsm_implementation.state
-
-    def trigger(self, input: InputsEnum):
-        self._fsm_definition.trigger(self._fsm_implementation, input)
-
-
-class Expression(ABC):
-    def __init__(self) -> None:
-        pass
-
-
-class ChainMixin:
-    def Action(self, callable: Callable) -> Action:
-        self.next = Action(callable)
-        return self.next
-
-    def State(self, value: object) -> State:
-        self.next = State(value)
-        return self.next
-
-    def If(self, condition: Callable, next_true: Expression, next_false: Expression) -> If:
-        self.next = If(condition, next_true, next_false)
-        return self.next
-
-    def Label(self, label: str) -> Label:
-        self.next = Label(label)
-        return self.next
-
-    def Jump(self, target: str) -> Jump:
-        self.next = Jump(target)
-        return self.next
-
-    def Output(self, output: object) -> Output:
-        self.next = Output(output)
-        return self.next
-
-
-class Action(Expression, ChainMixin):
-    # TODO: Add parameters to this (and to Fsm trigger)
-    def __init__(self, callable: Callable) -> None:
-        super().__init__()
-
-        self.callable: Callable = callable
-        self.next: Optional[Expression] = None
-
-
-class Output(Expression, ChainMixin):
-    def __init__(self, output: object) -> None:
-        super().__init__()
-
-        self.output: object = output
-        self.next: Optional[Expression] = None
-
-
-class State(Expression):   # TODO: Add typing to _state_
-    def __init__(self, state: object) -> None:
-        super().__init__()
-
-        self.state: object = state
-
-
-class If(Expression):
-    def __init__(self, condition: Callable, next_true: Expression, next_false: Expression) -> None:
-        super().__init__()
-
-        self.condition: Callable = condition
-        self.next_true: Expression = next_true
-        self.next_false: Expression = next_false
-
-
-class Label(Expression, ChainMixin):
-    def __init__(self, label: str) -> None:
-        super().__init__()
-
-        self.label: str = label
-        self.next: Optional[Expression] = None
-
-
-class Jump(Expression):
-    def __init__(self, target: str) -> None:
-        super().__init__()
-
-        self.target: str = target
-
-
-class CallableExpression(ABC):
-    def __init__(self) -> None:
-        pass
+# TODO: Making a Jump Table with arg unpack is faster a little bit
+class CallableExpressionRunner(ExpressionRunner[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, expr: CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> None:
+        self.chain: CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType] = expr
     
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> None:
+        cur_expr = self.chain
+        while cur_expr is not None:  
+            cur_expr = cur_expr(data, fsm_controller)
+
+
+class CallableExpression(ABC, Generic[StatesEnum, InputsEnum, OutputsEnum, DataType]):
     @abstractmethod
-    def __call__(self, fsm_definition: FsmDefinition, fsm_implementation: FsmImplementation) -> Optional[CallableExpression]:
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
         pass
 
 
-class CallableAction(CallableExpression):
-    def __init__(self, callable: Callable) -> None:
-        super().__init__()
+class CallableAction(CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, callable: Callable[[DataType], None]) -> None:
+        self._callable: Callable[[DataType], None] = callable
+        self.next: Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
 
-        self.callable: Callable = callable
-        self.next: Optional[CallableExpression] = None
-
-    def __call__(self, fsm_definition: FsmDefinition, fsm_implementation: FsmImplementation) -> Optional[CallableExpression]:
-        self.callable()
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
+        self._callable(data)
 
         return self.next
 
     
-class CallableOutput(CallableExpression):
-    def __init__(self, output: object) -> None:
-        super().__init__()
+class CallableOutput(CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, output: OutputsEnum) -> None:
+        self._output: OutputsEnum = output
+        self.next: Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]] = None
 
-        self.output: object = output  # TODO: Typing here and in __call__
-        self.next: Optional[CallableExpression] = None
-
-    def __call__(self, fsm_definition: FsmDefinition, fsm_implementation: FsmImplementation) -> Optional[CallableExpression]:
-        try:
-            output_definition = fsm_definition.configure_output(self.output)
-        except KeyError:
-            pass
-        else:
-            for on_output in output_definition.on_output:
-                on_output(fsm_definition, fsm_implementation, self.output)
-        try:
-            output_implementation = fsm_implementation.configure_output(self.output)  # type:ignore
-        except KeyError:
-            pass
-        else:
-            for on_output in output_implementation.on_output:
-                on_output(fsm_definition, fsm_implementation, self.output)
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
+        fsm_controller.trigger_output(self._output)
         
         return self.next
 
 
-class CallableState(CallableExpression):
-    def __init__(self, state: StatesEnum) -> None:
-        super().__init__()
-
-        self.state: StatesEnum = state
+class CallableState(CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, state: Optional[StatesEnum]) -> None:
+        self._state: Optional[StatesEnum] = state
  
-    def __call__(self, fsm_definition: FsmDefinition, fsm_implementation: FsmImplementation) -> Optional[CallableExpression]:
-        if self.state is None:
-            return None
-
-        source_state_definition = fsm_definition.configure_state(fsm_implementation.state)
-        source_state_implementation = fsm_implementation.configure_state(fsm_implementation.state)
-        destination_state_definition = fsm_definition.configure_state(fsm_implementation.state)
-        destination_state_implementation = fsm_implementation.configure_state(self.state)
-
-        for on_exit in source_state_definition.on_exit:
-            on_exit(fsm_definition, fsm_implementation, fsm_implementation.state, self.state)
-        for on_exit in source_state_implementation.on_exit:
-            on_exit(fsm_definition, fsm_implementation, fsm_implementation.state, self.state)
-        for on_enter in destination_state_definition.on_enter:
-            on_enter(fsm_definition, fsm_implementation, self.state, fsm_implementation.state)
-        for on_enter in destination_state_implementation.on_enter:
-            on_enter(fsm_definition, fsm_implementation, self.state, fsm_implementation.state)
-
-        fsm_implementation.state = self.state
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
+        fsm_controller.trigger_state(self._state)
 
         return None
 
 
-class CallableIf(CallableExpression):
-    def __init__(self, condition: Callable) -> None:
-        super().__init__()
-
-        self.condition: Callable = condition
+class CallableCondition(CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]):
+    def __init__(self, condition: Callable[[DataType], bool]) -> None:
+        self._condition: Callable[[DataType], bool] = condition
         self.next_true: Optional[CallableExpression] = None
         self.next_false: Optional[CallableExpression] = None
     
-    def __call__(self, fsm_definition: FsmDefinition, fsm_implementation: FsmImplementation) -> Optional[CallableExpression]:
-        condition = self.condition()
-
-        if condition is True:
+    def __call__(self, data: DataType, fsm_controller: FsmController[StatesEnum, InputsEnum, OutputsEnum, DataType]) -> Optional[CallableExpression[StatesEnum, InputsEnum, OutputsEnum, DataType]]:
+        if self._condition(data) is True:
             return self.next_true
         else:
             return self.next_false
@@ -807,116 +768,99 @@ class CallableIf(CallableExpression):
 # ------------------------------------------
 # ------------------------------------------
 
-class PandaState(Enum):
-    Sleep = 1
-    Awake = 2
-    Happy = 3
+class PandaState(IntEnum):
+    Sleep = 0
+    Awake = 1
+    Happy = 2
 
-class PandaInput(Enum):
-    WakeUp = 1
-    Feed = 2
-    Rest = 3
+class PandaInput(IntEnum):
+    WakeUp = 0
+    Feed = 1
+    Rest = 2
 
-class PandaOutput(Enum):
-    Poop = 1
+class PandaOutput(IntEnum):
+    Poop = 0
 
-def on_enter_print(panda_def, panda_impl, dst, src):
-    print(f"On enter from {src} to {dst}")
+@dataclass
+class PandaData:
+    happiness: int = 0
 
-def on_exit_print(panda_def, panda_impl, src, dst):
-    print(f"On exit from {src} to {dst}")
+def output_print(panda_impl: FsmImplementation[PandaState, PandaInput, PandaOutput, PandaData], output: PandaOutput):
+    print(f"Output print: {output} in state {panda_impl.state}")
 
-def on_output_print(panda_def, panda_impl, output):
-    print(f"On output {output}")
+def action_print(data: PandaData, msg: str):
+    print(f"Action print: {msg}")
 
-def on_input_print(panda_def, panda_impl, input):
-    print(f"On input {input}")
-
-def action_print(str):
-    print(f"Action print: {str}")
-
-def random_condition():
+def random_condition(data: PandaData):
     if random() > 0.5:
         return True
     else:
         return False
 
+def make_happier(data: PandaData, val: int):
+    data.happiness += val
 
-a = Action(partial(action_print, "WakeUp"))\
+def happiness_condition(data: PandaData):
+    if data.happiness > 10:
+        return True
+    else:
+        return False
+
+
+panda_definition = FsmDefinition(PandaState, PandaInput, PandaOutput, PandaData, PandaState.Awake, "Panda")
+panda_definition \
+    .set_state(PandaState.Sleep, [PandaInput.WakeUp, ]) \
+    .set_state(PandaState.Awake, [PandaInput.Feed, ]) \
+    .set_state(PandaState.Happy, [PandaInput.Rest, ]) \
+    .set_input(PandaInput.WakeUp,
+        Action(partial(action_print, msg="WakeUp"))\
         .State(PandaState.Awake)
-print(a)
-
-
-panda_definition = FsmDefinition(PandaState, PandaInput, PandaOutput, PandaState.Awake, "Panda")
-panda_definition.configure_state(PandaState.Sleep)\
-    .add_input(PandaInput.WakeUp)\
-    .add_on_enter(on_enter_print)\
-    .add_on_exit(on_exit_print)
-
-panda_definition.configure_state(PandaState.Awake)\
-    .add_input(PandaInput.Feed)\
-    .add_on_enter(on_enter_print)\
-    .add_on_exit(on_exit_print)
-panda_definition.configure_state(PandaState.Happy)\
-    .add_input(PandaInput.Rest)\
-    .add_on_enter(on_enter_print)\
-    .add_on_exit(on_exit_print)
-
-panda_definition.configure_input(PandaInput.WakeUp)\
-    .set_expression(
-        Action(partial(action_print, "WakeUp"))\
-        .State(PandaState.Awake)
-    )\
-    .add_on_input(on_input_print)
-panda_definition.configure_input(PandaInput.Feed)\
-    .set_expression(
-        Action(partial(action_print, "Feed"))
-        .Action(partial(action_print, "Feed2"))
-        .If(
-            random_condition,
-            Action(partial(action_print, "Random True"))\
+    ) \
+    .set_input(PandaInput.Feed,
+        Action(partial(action_print, msg="Feed"))
+        .Action(partial(make_happier, val=3))
+        .Condition(
+            random_condition
+            ,
+            Action(partial(action_print, msg="Random True")) \
             .State(None)
             ,
-            Action(partial(action_print, "Random False"))\
+            Action(partial(action_print, msg="Random False")) \
             .State(PandaState.Happy)
         )
-    )\
-    .add_on_input(on_input_print)
-
-#Effect1() >> Effect2() >> Effect3()
-
-# .Decide(some_callable, 
-# {
-#     1: bla,
-#     2: foo,
-#     3: boo,
-# }
-# )
-
-panda_definition.configure_input(PandaInput.Rest)\
-    .set_expression(
-        Action(partial(action_print, "Rest"))\
-        .If(
-            random_condition,
-            Action(partial(action_print, "Random2 True"))\
+    ) \
+    .set_input(PandaInput.Rest, 
+        Action(partial(action_print, msg="Rest"))\
+        .Condition(
+            happiness_condition
+            ,
+            Action(partial(action_print, msg="HAPPY!"))\
             .Output(PandaOutput.Poop)\
             .Jump("something")
             ,
-            Action(partial(action_print, "Random2 False"))\
+            Action(partial(action_print, msg="Not happy :<"))\
             .Label("something")\
             .State(PandaState.Sleep)
         )
-    )\
-    .add_on_input(on_input_print)
-panda_definition.configure_output(PandaOutput.Poop)\
-    .add_on_output(on_output_print)\
-    .remove_on_output(on_output_print)\
-    .add_on_output(on_output_print)
-
-panda_definition.build()
+        # Action(partial(action_print, "Rest"))\
+        # .Condition(
+        #     random_condition
+        #     ,
+        #     Action(partial(action_print, "Random2 True"))\
+        #     .Output(PandaOutput.Poop)
+        #     ,
+        #     Action(partial(action_print, "Random2 False"))
+        # )\
+        # .State(PandaState.Sleep)
+    ) \
+    .add_output_callback(PandaOutput.Poop, partial(output_print, output=PandaOutput.Poop))
+panda_definition.finalize()
 
 panda_fsm = panda_definition.implement()
 
-print(f"Panda state is {panda_fsm.state}")
-panda_fsm.trigger(PandaInput.Feed)
-print(f"Panda state is {panda_fsm.state}")
+print(f"Panda state is {panda_fsm.state.name}")
+while panda_fsm.state is PandaState.Awake:
+    panda_fsm.trigger(PandaInput.Feed)
+    print(f"Panda state is {panda_fsm.state.name}")
+panda_fsm.trigger(PandaInput.Rest)
+print(f"Panda state is {panda_fsm.state.name}")
